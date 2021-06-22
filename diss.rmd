@@ -1,0 +1,59 @@
+---
+title: "dissertation"
+author: "Sonya Kotov"
+date: "6/3/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(igraph)
+library(gdata)
+library(stringr)
+library(permute)
+library(hash)
+```
+
+# Turn CSV into Edge list
+
+Based on the CSV generated above, create three edge lists
+1. A network of directed liked users (directed)
+2. A network of liked users (directed)
+3. A network of matched users (undirected)
+
+```{r pressure, echo=FALSE}
+# read in clean example
+# we have one data frame
+
+# create new data frame edge list for direct liked users
+clean = read.csv("./CleanExample.csv", header = TRUE)
+
+generateEdgeList = function(source, dest) {
+  srcedges = c()
+  dstedges = c()
+  
+  # only destination cell can have multiple IDs, source cell only has one (because it is the row ID)
+  destsplit = lapply(str_split(dest, ","), str_trim)
+  for (i in 1:length(source)) { # can use either length of source or dest here
+    targets = destsplit[[i]]
+    for (j in 1:length(targets)) {
+      srcedges = append(srcedges, source[i])
+      dstedges = append(dstedges, targets[j]) 
+    }
+  }
+  
+  return(data.frame(srcedges, dstedges))
+  # TODO decide if I want to note whether it's hetero
+}
+
+dludf = generateEdgeList(clean$Anon.email, clean$Anon.direct.liked.users)
+ludf = generateEdgeList(clean$Anon.email, clean$Anon.liked.users)
+mudf = generateEdgeList(clean$Anon.email, clean$Anon.matched.users)
+
+write.csv(dludf, "./DirectLikedUsers.csv")
+write.csv(dludf, "./LikedUsers.csv")
+write.csv(dludf, "./MatchedUsers.csv")   
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

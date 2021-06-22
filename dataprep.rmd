@@ -1,0 +1,189 @@
+---
+title: "Dissertation Data Cleaning and Anonymization"
+author: "Sonya Kotov"
+date: "6/22/2021"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(permute)
+library(hash)
+```
+
+# Data Anonymization
+
+This code is run to anonymize sensitive user data. The intention is that this is run on MateApp's machine and the output file is given to me, the researcher
+
+## Delete unneeded data
+```{r}
+
+df = read.csv("./Example.csv", header = TRUE)
+
+# drop sensitive columns
+sensitive = c("About","Date.of.birth", "First.name", "Last.name", "Photos", "Profile.photo", "Undergraduate.school")
+df = df[ , !(colnames(df) %in% sensitive)]
+
+# drop unnecessary columns
+unneeded = c("Age.pref", "Company", "Books", "Films", "Podcasts", "Sports.team", "TV.Series", "Modified.Date", "Creation.Date")
+df = df[ , !(colnames(df) %in% unneeded)]
+
+# replace empty values with "NA", as this will be an issue later
+# TODO are there any other null values to check for?
+# TODO do I need to do this with any other columns? Just be sure to test with an empty email
+df$Graduate.School[df$Graduate.School == ""] = NA
+df$Hometown[df$Hometown == ""] = "NA"
+df$Interests[df$Interests == ""] = "NA"
+df$Interests.text[df$Interests.text == ""] = "NA"
+df$Job.position[df$Job.position == ""] = "NA"
+df$Language[df$Language == ""] = "NA"
+df$LBS.Program[df$LBS.Program == ""] = "NA"
+df$Location[df$Location == ""] = "NA"
+df$Politics[df$Politics == ""] = "NA"
+df$Religion[df$Religion == ""] = "NA"
+df$Social.circle[df$Social.circle == ""] = "NA"
+df$Social.Circle.text[df$Social.Circle.text == ""] = "NA"
+```
+
+## Turn emails into IDs
+There are five columns that contain emails. Two of these columns contain a single email, while the remaining three can have multiple emails, separated by commas. I collect all the emails, assign them to a unique id, then replace each email with it's corresponding Id. I finish by dropping all columns that contain emails.
+```{r}
+
+# convert emails into user IDs
+emailcols = c("email", "Direct.liked.users", "Liked.users", "Matched.users", "No.matched.users")
+
+extractEmails = function(columnName) {
+  emails = c()
+  col = lapply(str_split(df[[columnName]], ","), str_trim)
+  for (emailset in col){
+    for (email in emailset) {
+      emails = append(emails, email)
+    }
+  }
+  return(emails)
+}
+
+masterlist = c()
+for (colname in emailcols) {
+  masterlist = append(masterlist, extractEmails(colname))  
+}
+masterlist = unique(masterlist)
+
+
+# remove any elements in the list that are not valid emails
+cond = lapply(masterlist, function(x) grepl("^[[:alnum:]._-]+@[[:alnum:].-]+$", x))
+masterlist = masterlist[unlist(cond)]
+
+# replace each email with an ID 
+outputIds = shuffle(length(masterlist))
+emailToId = hash(masterlist, outputIds)
+
+# then, we need to go and update the dataframe, replacing the emails with Ids
+
+# this function takes a column of emails and returns an anonymized column
+anonymizeColumn = function(column) {
+  anonymized = c()
+  for (line in column) {
+    splitvalues = str_split(line, " , ")
+    cond = lapply(splitvalues, function(x) grepl("^[[:alnum:]._-]+@[[:alnum:].-]+$", x))
+    emails = splitvalues[unlist(cond)] # now this should only contain valid emails
+    asIds = lapply(unlist(emails), function(x) emailToId[[x]])
+    anonymized = append(anonymized, paste( unlist(asIds), collapse=' , '))
+  }
+  return(anonymized)
+}
+df$Anon.email = anonymizeColumn(df$email)
+df$Anon.direct.liked.users = anonymizeColumn(df$Direct.liked.users)
+df$Anon.liked.users = anonymizeColumn(df$Liked.users)
+df$Anon.matched.users = anonymizeColumn(df$Matched.users)
+
+# finally, drop all non-anonymous email columns
+df = df[ , !(colnames(df) %in% emailcols)]
+```
+
+## Convert geographies
+Convert hometowns into countries and countries outside of Europe into regions
+
+```{r}
+# TODO
+```
+
+## Delete values that appear fewer than 5 times
+For the following columns, if a value appears less than 5 times, erase it.
+
+```{r}
+# note that some of these are strings, while others are numbers...do I want to keep interests as both strings and numbers?
+toFilter = c("Hometown", "Interests", "Interests.text", "Job.position", "Language", "LBS.Program", "Location", "Politics", "Religion", "Social.circle")
+
+THRESHOLD = 2 # a value needs to appear this many times to pass through the filter
+
+# returns a hash mapping values to instance count
+frequencyMap = function(values) {
+  values = lapply(values, toupper) # will toupper be ok for numbers?
+  uniques = unique(values)
+  print(uniques)
+  mapping = hash(unlist(uniques), c(rep(0, length(uniques)))) # not convinced that this line works
+  for (v in values) {
+    mapping[[v]] = mapping[[v]] + 1
+  }
+  return(mapping)
+}
+
+filterColumn = function(col) {
+  # collect all values in the column
+  alldimensionvalues = c()
+  column = lapply(col, toupper)
+  for (l in column) {
+    alldimensionvalues = append(alldimensionvalues, str_split(l, " , "))
+  }
+  
+  # create a hash, with unique(vals) as keys
+  freqmap = frequencyMap(unlist(alldimensionvalues))
+  for (k in keys(freqmap)) {
+    if (freqmap[[k]] < THRESHOLD){
+      del(k, freqmap)
+    }
+  }
+  # now, all keys that are ok to keep are in the mapping
+  # go through the data once again and remove the values that do not exist in the mapping 
+  sanitizedcolumn = c()
+  for (l in column) {
+    keeps = list()
+    vals = str_split(l, " , ")
+    for (v in vals) {
+      if (has.key(v, freqmap)) {
+        keeps = append(keeps, c(v))
+      }
+    }
+    if (length(keeps) == 0){
+      keeps = append(keeps, "NA") # consider replacing 'NA' with a custom version of NA that I'm certain only came from me
+    }
+    sanitizedcolumn = append(sanitizedcolumn, paste( unlist(keeps), collapse=' , '))
+  }
+  return(sanitizedcolumn)
+}
+
+df$Hometown.filtered = filterColumn(df$Hometown)
+df$Location.filtered = filterColumn(df$Location)
+df$Language.filtered = filterColumn(df$Language)
+df$Graduate.School.filtered = filterColumn(df$Graduate.School)
+
+df$Interests.filtered = filterColumn(df$Interests)
+df$Interests.text.filtered = filterColumn(df$Interests.text)
+
+df$Job.position.filtered = filterColumn(df$Job.position)
+df$LBS.Program.filtered = filterColumn(df$LBS.Program) # something like LBS program will not be normalized unless it's from a multiselect
+
+df$Politics.filtered = filterColumn(df$Politics)
+df$Religion.filtered = filterColumn(df$Religion)
+
+df$Social.circle.filtered = filterColumn(df$Social.circle)
+df$Social.circle.text.filtered = filterColumn(df$Social.Circle.text)
+
+# finally, drop all non-filtered  columns
+df = df[ , !(colnames(df) %in% toFilter)]
+```
+
+## Write to disk
+```{r}
+write.csv(df, "./CleanExample.csv")
+```
