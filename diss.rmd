@@ -8,9 +8,7 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(igraph)
-library(gdata)
 library(stringr)
-library(permute)
 library(hash)
 ```
 
@@ -22,10 +20,6 @@ Based on the CSV generated above, create three edge lists
 3. A network of matched users (undirected)
 
 ```{r pressure, echo=FALSE}
-# read in clean example
-# we have one data frame
-
-# create new data frame edge list for direct liked users
 clean = read.csv("./CleanExample.csv", header = TRUE)
 
 generateEdgeList = function(source, dest) {
@@ -33,12 +27,12 @@ generateEdgeList = function(source, dest) {
   dstedges = c()
   
   # only destination cell can have multiple IDs, source cell only has one (because it is the row ID)
-  destsplit = lapply(str_split(dest, ","), str_trim)
+  destsplit = lapply(str_split(dest, " , "), str_trim)
   for (i in 1:length(source)) { # can use either length of source or dest here
     targets = destsplit[[i]]
     for (j in 1:length(targets)) {
-      srcedges = append(srcedges, source[i])
-      dstedges = append(dstedges, targets[j]) 
+      srcedges = append(srcedges, str_trim(source[i]))
+      dstedges = append(dstedges, str_trim(targets[j]))
     }
   }
   
@@ -50,10 +44,56 @@ dludf = generateEdgeList(clean$Anon.email, clean$Anon.direct.liked.users)
 ludf = generateEdgeList(clean$Anon.email, clean$Anon.liked.users)
 mudf = generateEdgeList(clean$Anon.email, clean$Anon.matched.users)
 
+# write the edge lists to disk just in case we need 
 write.csv(dludf, "./DirectLikedUsers.csv")
-write.csv(dludf, "./LikedUsers.csv")
-write.csv(dludf, "./MatchedUsers.csv")   
+write.csv(ludf, "./LikedUsers.csv")
+write.csv(mudf, "./MatchedUsers.csv")   
 
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# Turn Edge Lists into Networks and read in Attributes
+
+```{r}
+# TODO do I need to do anything special to remove dupes?
+directliked = graph.edgelist(as.matrix(dludf[,1:2]), directed = TRUE)
+liked = graph.edgelist(as.matrix(ludf[,1:2]), directed = TRUE)
+matched = graph.edgelist(as.matrix(mudf[,1:2]), directed = FALSE)
+
+length(V(directliked)) # should be 5
+length(V(liked)) # should be 9
+length(V(matched)) # should be 9
+
+# add attributes to each of the networks
+
+columns = c("Gender", "Age", "Drink", "Height", "Interested.in", "Music", "Open", "Pause", "Places", "Publish", "Search", "Smoke", "Open", "Hometown.filtered", "Location.filtered", "Language.filtered", "Graduate.School.filtered", "Interests.filtered", "Interests.text.filtered", "Job.position.filtered", "LBS.Program.filtered", "Politics.filtered", "Religion.filtered")
+
+setattributes = function(graph, columns) {
+  attributes = hash(columns, c(rep(NULL, length(columns))))
+  for (i in 1:length(V(graph))) {
+    nodeName = V(graph)[i]$name
+    metaidx = which(clean$Anon.email == nodeName)
+    for(c in columns){
+      if (is.na(clean[[c]][metaidx]) || clean[[c]][metaidx] == '') {
+        attributes[[c]][i] = ""
+      }
+      else {
+        attributes[[c]][i] = clean[[c]][metaidx]
+      }
+    }
+  }
+  
+  # TODO should set empty string values to NULL so that ergm handles them
+  # TODO will I need to worry about casing (as in the Drink column)
+  
+  for(c in columns) {
+    graph = set.vertex.attribute(graph, c, V(graph), attributes[[c]])
+  }
+
+  return(graph)
+}
+
+directliked = setattributes(directliked, columns)
+liked = setattributes(liked, columns) # something is going wrong with the null checks here I think
+matched = setattributes(matched, columns)
+
+```
